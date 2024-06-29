@@ -1,3 +1,6 @@
+
+
+
 clc
 % Import data from Excel file
 daily_data = importdata('SP500_hr.xlsx');
