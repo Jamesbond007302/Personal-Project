@@ -1,0 +1,139 @@
+clc
+% Import data from Excel file
+daily_data = importdata('SP500_hr.xlsx');
+disp(daily_data)
+% Extract the desired column for returns calculation
+column_index = 6;
+close_price = daily_data.data(:, column_index);
+close_price_subset = close_price(1:30154);
+
+% Calculate returns for the subset of data
+returns = diff(log(close_price_subset));
+% Display summary statistics
+
+% Add returns as a new variable in daily_data
+daily_data.returns = [NaN; returns];
+% Returns simulation, estimation, std error computation
+format long
+
+
+
+N_ret = 30153
+% number of return
+
+% optimization options
+options = optimoptions('fminunc','MaxFunEvals',15000,'MaxIter',3000,...
+   'TolFun',1e-6,'TolX',1e-6);
+
+%% Simulate return
+
+r=0
+h_init = 1e-04 
+
+
+
+x0 = [2,0.6,7,3]
+%% 
+[x_max,f_val4,flag,output] = fminunc(@(x) loss(x,r,h_init,returns),x0,options)
+output.message
+    
+%std error
+gradient = numfirstderiv(@(x) hn_lik_vec(inv_rescale(x),r,h_init,returns),x_max,0.00001);
+std_error = sqrt(diag(inv(gradient'*gradient)));
+estimate_ret = inv_rescale(x_max);
+std_error_ret = inv_rescale(std_error);
+
+fprintf('This is returns only estimation result\n')
+
+format short
+table(["lambda", "alpha","beta","gamma"]',estimate_ret',std_error_ret','VariableNames',["Para", "Est_ret", "StdErr_ret"])
+format long
+% Set the desired confidence level (e.g., 95%)
+confidence_level = 0.95;
+
+% Compute the critical value
+critical_value = norminv((1 + confidence_level) / 2);
+
+% Compute the margin of error for each parameter estimate
+margin_of_error = critical_value * std_error_ret;
+
+% Calculate the lower and upper bounds of the confidence interval
+lower_bound = estimate_ret - margin_of_error;
+upper_bound = estimate_ret + margin_of_error;
+
+% Create a table with the parameter estimates, standard errors, and confidence intervals
+result_table = table(["lambda"; "alpha"; "beta"; "gamma"], estimate_ret', std_error_ret', lower_bound', upper_bound', 'VariableNames', ["Para", "Est_ret", "StdErr_ret", "CI_Lower", "CI_Upper"]);
+
+% Display the table
+disp(result_table);
+
+
+
+% return lik vec only
+function [error,z,h] = hn_lik_vec(theta,r,h_init,daily_ret)
+    % This function receives parameters theta = (lambda,omega,alpha,beta,
+    % gamma), r, h_init and calculates z_1,...,z_N and returns 
+    % vector of log likelihood, implied residual and h
+
+    N = length(daily_ret);
+    lambda = theta(1);
+   
+    alpha = theta(2);
+    beta = theta(3);
+    gamma = theta(4);
+
+    h = zeros(1,N+1);
+    h(1) = h_init;
+    z = zeros(1,N);
+
+    % calculate h and z implied by stock prices
+    for i = 1:N
+        z(i) = (daily_ret(i) - r - lambda * h(i)) / sqrt(h(i));
+        h(i+1) = beta * h(i) + alpha * (z(i) - gamma * sqrt(h(i)))^2;
+    end
+
+    h = h(1:N);
+    % vectorized error
+    error = -.5 * (log(2*pi*h(1:N)) + z.^2);
+    % error = -.5 * (log(h(1:N)) + z.^2);
+end
+
+% scaling
+function theta = inv_rescale(x)
+    % apply the scaling in order to make optimization efficient
+
+    lambda = x(1) * 10^2;
+    
+    alpha = x(2) * 10^(-6);
+    beta = x(3) * 10^(-1);
+    gamma = x(4) * 10^(2);
+    theta = [lambda, alpha, beta, gamma];
+end
+
+% optimize function
+function error = loss(x,r,h_init,ret)
+    vec_ret = hn_lik_vec(inv_rescale(x),r,h_init,ret);
+    error = -1 * sum(vec_ret(1:end));
+end
+% first derivative via finite difference
+function [gmatrix]=numfirstderiv(func_name, theta, eps)
+% This function calculates the numerical first derivative of a function
+% The function should return a Nx1 matrix and the parameter vector should
+% be kx1. The returned value is a Nxk matrix
+
+for i=1:length(theta)
+theta_forward=theta;
+theta_backward=theta;
+% delta_theta=max(abs(theta(i)*eps),eps)
+delta_theta=abs(theta(i)*eps);
+theta_forward(i)=theta_forward(i)+delta_theta;
+theta_backward(i)=theta_backward(i)-delta_theta;
+gmatrix(:,i)=.5*(func_name(theta_forward)-func_name(theta_backward))./delta_theta;
+end
+
+if ~isreal(gmatrix)
+disp('WARNING!')
+disp('Complex valued gradient matrix.')
+end
+
+end
